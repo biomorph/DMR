@@ -5,9 +5,8 @@ import sys
 import argparse
 import os
 
-#methyl_cov = BedTool('../../bismark_cov/SRR1036970_1_val_1.fq.gz_bismark_pe.deduplicated.bismark.cov')
 
-
+# This function makes window_sized genome windows bed
 def make_chrom_bins_bed(chromSizes_file, window_size):
     chrom_bin_bed_file = str(window_size) +  'windowGenome.bed'
     if os.path.exists(chrom_bin_bed_file): return BedTool(chrom_bin_bed_file)
@@ -27,16 +26,26 @@ def get_bin_intervals(feature,bin,window):
     return feature.chrom == bin[0] and feature.start >= bin[1] and feature.start <= bin[1] + window
 
 
-def get_windowed_methylation_bed(replicates, chrom_bins_bed, minCov, window):
+# This function takes the bismark coverage files and adds up the number of methylated and unmethylated C's over each window and filters windows with missing data and with coverage < minCov
+def get_filtered_window_methylation(cov_bed, chrom_bins_bed, minCov, window):
     window_methylation_bed = chrom_bins_bed
-    windowed_bed_file_name = str(window) + 'window' + str(minCov) + 'minCov'
-    for replicate in replicates:
-        replicate_bed = BedTool(replicate)
-        sorted_bed = replicate_bed.sort()
-        window_methylation_bed = window_methylation_bed.map(b=sorted_bed,c='5,6')
-        windowed_bed_file_name += '-' + replicate.split('.')[0]
-    window_methylation_bed.filter(lambda d: d[3] != '.' and d[4] != '.' and int(d[3])+int(d[4])>10).saveas(windowed_bed_file_name)
+    windowed_bed_file_name = str(window) + 'window-' + str(minCov) + 'minCov-' + cov_bed.split('.')[0] + '.bed'
+    bed = BedTool(cov_bed)
+    sorted_bed = bed.sort()
+    window_methylation_bed = window_methylation_bed.map(b=sorted_bed,c='5,6')
+    window_methylation_bed.filter(lambda d: d[3] != '.' and d[4] != '.').saveas(windowed_bed_file_name)
+    return windowed_bed_file_name
 
+# Filters the windowed beds to common set of windows among all samples. This will make plotting and statistics easier
+def get_common_windows (bed_list):
+    a = BedTool()
+    common_bed = a.multi_intersect(i=bed_list).filter(lambda z:int(z[3]) == len(bed_list)).saveas('common.bed')
+    for bed in bed_list:
+        BedTool(bed).intersect(b=common_bed).saveas(bed+'-common')
+
+
+
+'''
 def group_input_files(files, groups):
     file_group_dict = {}
     file_groups = files.split(':')
@@ -49,7 +58,7 @@ def group_input_files(files, groups):
         else:
             file_group_dict[group] = [file_groups[i].split(',')]
     return file_group_dict
-
+'''
 
 parser = argparse.ArgumentParser()
 
@@ -66,16 +75,20 @@ parser.add_argument('-minCov', type = int, help = 'minimum number of cytosines c
 args = parser.parse_args()
 
 
-condition_dict = group_input_files(args.data, args.groups)
+file_array = args.data.strip().split(',')
 chrom_bins_bed = make_chrom_bins_bed(args.chromSizes,args.window)
 
 minCov = 10
 if args.minCov: minCov = args.minCov
+filtered_bed_array = []
 
-for condition in condition_dict:
-    biological_replicates = condition_dict[condition]
-    for tech_replicate in biological_replicates:
-        get_windowed_methylation_bed(tech_replicate, chrom_bins_bed, minCov, args.window)
+for file in file_array:
+    filtered_bed = get_filtered_window_methylation (file, chrom_bins_bed, minCov, args.window)
+    filtered_bed_array.append(filtered_bed)
+
+get_common_windows(filtered_bed_array)
+
+
 
 
 
